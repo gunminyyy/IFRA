@@ -7,31 +7,30 @@ from io import BytesIO
 
 # --- 헬퍼 함수 ---
 
-def extract_text_between(text, start_keyword, end_keyword):
-    """두 키워드 사이의 텍스트를 추출하는 함수"""
+def extract_text_between(text, start_keyword, end_keyword=None):
+    """
+    두 키워드 사이의 텍스트를 추출하거나, 
+    end_keyword가 없을 경우 start_keyword 이후의 텍스트 한 줄을 추출하는 함수
+    """
     
     def flexible_escape(kw):
-        # 1. 정규식 특수문자 기본 이스케이프 처리
         escaped = re.escape(kw)
-        
-        # 2. 공백 유연성: 일반 공백이나 이스케이프된 공백을 모두 허용(\s+)
         escaped = escaped.replace(r'\ ', r'\s+')
         escaped = escaped.replace(' ', r'\s+')
-        
-        # 3. 마침표(.) 유연성: 마침표 앞뒤 공백 허용 및 마침표 생략 가능
         escaped = escaped.replace(r'\.', r'\s*\.?\s*')
-        
-        # 4. 별표(*) 유연성: 별표 앞뒤로 생기는 공백까지 모두 허용
         escaped = escaped.replace(r'\*', r'\s*\*\s*')
-        
         return escaped
 
     start_pattern = flexible_escape(start_keyword)
-    end_pattern = flexible_escape(end_keyword)
     
-    # re.DOTALL: 줄바꿈 무시, re.IGNORECASE: 대소문자 무시
-    pattern = f"{start_pattern}(.*?){end_pattern}"
-    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    if end_keyword:
+        end_pattern = flexible_escape(end_keyword)
+        pattern = f"{start_pattern}(.*?){end_pattern}"
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    else:
+        # end_keyword가 없으면 start_keyword 이후 같은 줄의 내용을 끝까지 추출
+        pattern = f"{start_pattern}(.*)"
+        match = re.search(pattern, text, re.IGNORECASE)
     
     if match:
         extracted = match.group(1).strip()
@@ -41,8 +40,6 @@ def extract_text_between(text, start_keyword, end_keyword):
 
 def process_value(val_str):
     """추출된 텍스트에서 숫자, Not Permitted, Not Restricted를 분류하여 변환"""
-    
-    # 숫자형(int, float) 데이터가 직접 들어왔을 경우 문자열로 변환
     if isinstance(val_str, (int, float)): 
         val_str = str(val_str)
         
@@ -51,15 +48,12 @@ def process_value(val_str):
         
     val_lower = val_str.lower()
     
-    # 1. 'Not permitted' 처리
     if "not" in val_lower and "permitted" in val_lower:
         return "Not Permitted"
         
-    # 2. 'Not Restricted' 처리
     if "not" in val_lower and "restricted" in val_lower:
         return "Not Restricted"
 
-    # 3. 숫자 추출 및 소수점 2자리 포맷팅
     num_match = re.search(r'\d+\.?\d*', val_str)
     
     if not num_match:
@@ -75,8 +69,8 @@ def process_value(val_str):
             s = str(val_float)
             if '.' in s:
                 int_part, dec_part = s.split('.')
-                dec_part = dec_part[:2] # 소수점 2자리에서 절사 (반올림X)
-                dec_part = dec_part.ljust(2, '0') # 1자리일 경우 0을 채움
+                dec_part = dec_part[:2] 
+                dec_part = dec_part.ljust(2, '0')
                 return f"{int_part}.{dec_part}"
             else:
                 return f"{s}.00"
@@ -113,7 +107,8 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
             "CATEGORY10_B": extract_text_between(full_text, "Category 10.B", "Category 11.A"),
             "CATEGORY11_A": extract_text_between(full_text, "Category 11.A", "Category 11.B"),
             "CATEGORY11_B": extract_text_between(full_text, "Category 11.B", "Category 12"),
-            "CATEGORY12": extract_text_between(full_text, "Category 12", "For other")
+            # Category 12 뒤의 키워드가 불분명하므로, 해당 줄의 숫자만 추출하도록 None 지정
+            "CATEGORY12": extract_text_between(full_text, "Category 12", None)
         }
     elif mode == "HP":
         context = {
@@ -136,8 +131,8 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
             "CATEGORY10_B": extract_text_between(full_text, "Category 10.B", "Category 11.A"),
             "CATEGORY11_A": extract_text_between(full_text, "Category 11.A", "Category 11.B"),
             "CATEGORY11_B": extract_text_between(full_text, "Category 11.B", "Category 12"),
-            # 기준점을 "*Only fragrance"에서 "*Only"로 단축하여 매칭률 상향 조정
-            "CATEGORY12": extract_text_between(full_text, "Category 12", "*Only")
+            # Category 12 뒤의 키워드가 불분명하므로, 해당 줄의 숫자만 추출하도록 None 지정
+            "CATEGORY12": extract_text_between(full_text, "Category 12", None)
         }
 
     template_path = "templates/IFRA.docx"
@@ -207,3 +202,4 @@ if convert_clicked:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
+
