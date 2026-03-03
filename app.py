@@ -8,28 +8,47 @@ from io import BytesIO
 # --- 헬퍼 함수 ---
 
 def extract_text_between(text, start_keyword, end_keyword):
-    """두 키워드 사이의 텍스트를 추출하는 함수"""
-    # 이스케이프 처리를 통해 정규표현식 오류 방지
-    start_esc = re.escape(start_keyword)
-    end_esc = re.escape(end_keyword)
+    """두 키워드 사이의 텍스트를 추출하는 함수 (공백/줄바꿈 유연성 강화)"""
     
-    # re.DOTALL을 사용하여 줄바꿈 포함 검색
-    pattern = f"{start_esc}(.*?){end_esc}"
-    match = re.search(pattern, text, re.DOTALL)
+    def flexible_escape(kw):
+        # 정규식 특수문자를 이스케이프 처리한 뒤, 
+        # 띄어쓰기를 모든 공백문자(\s+) 허용으로 변경
+        escaped = re.escape(kw)
+        escaped = escaped.replace(r'\ ', r'\s+')
+        # 별표(*) 앞에도 혹시 모를 공백 허용
+        escaped = escaped.replace(r'\*', r'\s*\*')
+        return escaped
+
+    start_pattern = flexible_escape(start_keyword)
+    end_pattern = flexible_escape(end_keyword)
+    
+    # 두 키워드 사이의 텍스트 탐색 (대소문자 무시, 줄바꿈 포함)
+    pattern = f"{start_pattern}(.*?){end_pattern}"
+    match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     
     if match:
         extracted = match.group(1).strip()
         return process_value(extracted)
+    
     return "Not Permitted" # 매칭 안 되면 기본값
 
 def process_value(val_str):
-    """추출된 값을 분석하여 소수점 둘째 자리 또는 Not Permitted로 변환"""
+    """추출된 텍스트에서 첫 번째 숫자를 찾아 소수점 둘째 자리 또는 Not Permitted로 변환"""
+    if not val_str:
+        return "Not Permitted"
+        
+    # 이미 'Not permitted'라고 텍스트로 적혀있는 경우 우선 처리
+    if "not" in val_str.lower() and "permitted" in val_str.lower():
+        return "Not Permitted"
+
+    # 텍스트 내에서 첫 번째로 등장하는 숫자(소수점 포함) 추출
+    num_match = re.search(r'\d+\.?\d*', val_str)
+    
+    if not num_match:
+        return "Not Permitted"
+        
     try:
-        # 숫자 추출 (쉼표 제거 등)
-        clean_str = re.sub(r'[^\d.]', '', val_str)
-        if not clean_str:
-             return "Not Permitted"
-             
+        clean_str = num_match.group(0)
         val_float = float(clean_str)
         
         # 0이거나 0.0일 경우 Not Permitted
@@ -46,10 +65,7 @@ def process_value(val_str):
             else:
                 return f"{s}.00"
     except ValueError:
-        # 숫자로 변환할 수 없는 경우 (예: 이미 텍스트로 Not Permitted 등이 적혀있을 때)
-        if "Not" in val_str or "permitted" in val_str.lower():
-            return "Not Permitted"
-        return val_str # 그 외 텍스트는 그대로 반환
+        return "Not Permitted"
 
 # --- 메인 로직 ---
 
@@ -60,7 +76,7 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         for page in pdf.pages:
             full_text += page.extract_text() + "\n"
 
-    # 2. Context 딕셔너리 생성 (공통) - 키 값의 마침표를 언더바로 변경
+    # 2. Context 딕셔너리 생성 (공통) - 키 값의 마침표를 언더바로 유지
     context = {
         "CUSTOMER": customer_name,
         "PRODUCT": product_name,
@@ -81,7 +97,7 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         "CATEGORY11_B": extract_text_between(full_text, "Category 11.B*", "Category 12")
     }
 
-    # 3. 모드별 분기 처리 (차이점만 반영) - 키 값의 마침표를 언더바로 변경
+    # 3. 모드별 분기 처리 (차이점만 반영)
     if mode == "CFF":
         context["CATEGORY5_D"] = extract_text_between(full_text, "Category 5.D*", "Category 6")
         context["CATEGORY6"] = extract_text_between(full_text, "Category 6", "Category 7.A")
@@ -94,7 +110,6 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
     # 4. Word 템플릿 렌더링
     template_path = "templates/IFRA.docx"
     
-    # 템플릿 파일 존재 여부 확인
     if not os.path.exists(template_path):
         st.error(f"오류: 템플릿 파일이 없습니다. '{template_path}' 경로를 확인해주세요.")
         return None
@@ -103,7 +118,6 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         doc = DocxTemplate(template_path)
         doc.render(context)
         
-        # 메모리 버퍼에 저장 (직접 다운로드를 위해)
         output_io = BytesIO()
         doc.save(output_io)
         output_io.seek(0)
@@ -111,7 +125,6 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         return output_io
     except Exception as e:
         st.error(f"템플릿 렌더링 중 오류가 발생했습니다: {e}")
-        st.error("Word 템플릿 파일 내의 변수명에 마침표(.)가 없는지 확인해주세요. (예: {{CATEGORY5.A}} -> {{CATEGORY5_A}})")
         return None
 
 # --- Streamlit UI 구성 ---
@@ -119,7 +132,6 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
 st.set_page_config(page_title="PDF to Word Converter", layout="wide")
 st.title("IFRA PDF -> Word 자동 변환기")
 
-# 레이아웃 나누기 (왼쪽: 파일 업로드, 오른쪽: 설정 입력)
 col1, col2 = st.columns(2)
 
 with col1:
@@ -134,14 +146,12 @@ with col2:
 
 st.divider()
 
-# 하단 레이아웃 (왼쪽: 변환 버튼, 오른쪽: 다운로드 영역)
 col_btn_left, col_btn_right = st.columns(2)
 
 with col_btn_left:
     convert_clicked = st.button("변환 시작", type="primary", use_container_width=True)
 
 with col_btn_right:
-    # 다운로드 버튼을 담을 빈 공간(placeholder) 생성
     download_placeholder = st.empty()
 
 # --- 변환 버튼 클릭 시 동작 ---
@@ -152,14 +162,13 @@ if convert_clicked:
         st.warning("고객사명과 제품명을 모두 입력해주세요.")
     else:
         with st.spinner("변환 작업 진행 중..."):
-            # 로직 실행
             result_docx = process_pdf_to_word(uploaded_pdf, customer_input, product_input, mode_selection)
             
             if result_docx:
                 st.success("변환 성공!")
                 
-                # 다운로드 버튼 렌더링
-                file_name = f"spec_{customer_input}_{product_input}.docx"
+                # 요청하신 대로 파일명을 "제품명 IFRA 51TH.docx" 로 지정
+                file_name = f"{product_input} IFRA 51TH.docx"
                 download_placeholder.download_button(
                     label="결과물 다운로드",
                     data=result_docx,
