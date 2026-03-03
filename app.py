@@ -1,89 +1,87 @@
 import streamlit as st
 import pdfplumber
+from docxtpl import DocxTemplate
 import os
 import re
 from io import BytesIO
-from docxtpl import DocxTemplate
 
-
-# --- Helper Functions ---
+# --- 헬퍼 함수 ---
 
 def extract_text_between(text, start_keyword, end_keyword):
     """두 키워드 사이의 텍스트를 추출하는 함수"""
-
+    
     def flexible_escape(kw):
         # 1. 정규식 특수문자 기본 이스케이프 처리
         escaped = re.escape(kw)
-
+        
         # 2. 공백 유연성: 일반 공백이나 이스케이프된 공백을 모두 허용(\s+)
         escaped = escaped.replace(r'\ ', r'\s+')
         escaped = escaped.replace(' ', r'\s+')
-
-        # 3. 마침표(.) 유연성: 마침표 앞뒤 공백 허용 및 마침표 생략 가능(예: 5.A, 5. A, 5 A 모두 인식)
+        
+        # 3. 마침표(.) 유연성: 마침표 앞뒤 공백 허용 및 마침표 생략 가능
         escaped = escaped.replace(r'\.', r'\s*\.?\s*')
-
-        # 4. 별표(*) 유연성: 별표 앞뒤로 생기는 공백까지 모두 허용 (예: 6*, 6 *)
+        
+        # 4. 별표(*) 유연성: 별표 앞뒤로 생기는 공백까지 모두 허용
         escaped = escaped.replace(r'\*', r'\s*\*\s*')
-
+        
         return escaped
 
     start_pattern = flexible_escape(start_keyword)
     end_pattern = flexible_escape(end_keyword)
-
+    
     # re.DOTALL: 줄바꿈 무시, re.IGNORECASE: 대소문자 무시
     pattern = f"{start_pattern}(.*?){end_pattern}"
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-
+    
     if match:
         extracted = match.group(1).strip()
         return process_value(extracted)
-
+    
     return "Not Permitted"
-
 
 def process_value(val_str):
     """추출된 텍스트에서 숫자, Not Permitted, Not Restricted를 분류하여 변환"""
     
+    # 숫자형(int, float) 데이터가 직접 들어왔을 경우 문자열로 변환
     if isinstance(val_str, (int, float)): 
         val_str = str(val_str)
-    
+        
     if not val_str:
         return "Not Permitted"
-
+        
     val_lower = val_str.lower()
-
+    
     # 1. 'Not permitted' 처리
     if "not" in val_lower and "permitted" in val_lower:
         return "Not Permitted"
-
+        
     # 2. 'Not Restricted' 처리
     if "not" in val_lower and "restricted" in val_lower:
         return "Not Restricted"
 
     # 3. 숫자 추출 및 소수점 2자리 포맷팅
     num_match = re.search(r'\d+\.?\d*', val_str)
-
+    
     if not num_match:
         return "Not Permitted"
-
+        
     try:
         clean_str = num_match.group(0)
         val_float = float(clean_str)
-
+        
         if val_float == 0.0:
             return "Not Permitted"
         else:
             s = str(val_float)
             if '.' in s:
                 int_part, dec_part = s.split('.')
-                dec_part = dec_part[:2]  # 소수점 2자리에서 절사 (반올림X)
-                dec_part = dec_part.ljust(2, '0')
+                dec_part = dec_part[:2] # 소수점 2자리에서 절사 (반올림X)
+                dec_part = dec_part.ljust(2, '0') # 1자리일 경우 0을 채움
                 return f"{int_part}.{dec_part}"
             else:
                 return f"{s}.00"
     except ValueError:
         return "Not Permitted"
-
 
 # --- 메인 로직 ---
 
@@ -138,11 +136,12 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
             "CATEGORY10_B": extract_text_between(full_text, "Category 10.B", "Category 11.A"),
             "CATEGORY11_A": extract_text_between(full_text, "Category 11.A", "Category 11.B"),
             "CATEGORY11_B": extract_text_between(full_text, "Category 11.B", "Category 12"),
-            "CATEGORY12": extract_text_between(full_text, "Category 12", "*Only fragrance")
+            # 기준점을 "*Only fragrance"에서 "*Only"로 단축하여 매칭률 상향 조정
+            "CATEGORY12": extract_text_between(full_text, "Category 12", "*Only")
         }
 
     template_path = "templates/IFRA.docx"
-
+    
     if not os.path.exists(template_path):
         st.error(f"오류: 템플릿 파일이 없습니다. '{template_path}' 경로를 확인해주세요.")
         return None
@@ -150,16 +149,15 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
     try:
         doc = DocxTemplate(template_path)
         doc.render(context)
-
+        
         output_io = BytesIO()
         doc.save(output_io)
         output_io.seek(0)
-
+        
         return output_io
     except Exception as e:
         st.error(f"템플릿 렌더링 중 오류가 발생했습니다: {e}")
         return None
-
 
 # --- Streamlit UI 구성 ---
 
@@ -197,10 +195,10 @@ if convert_clicked:
     else:
         with st.spinner("변환 작업 진행 중..."):
             result_docx = process_pdf_to_word(uploaded_pdf, customer_input, product_input, mode_selection)
-
+            
             if result_docx:
                 st.success("변환 성공!")
-
+                
                 file_name = f"{product_input} IFRA 51TH.docx"
                 download_placeholder.download_button(
                     label="결과물 다운로드",
@@ -209,4 +207,3 @@ if convert_clicked:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
-
