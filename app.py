@@ -36,14 +36,7 @@ def process_value(val_str):
         if val_float == 0.0:
             return "Not Permitted"
         else:
-            # 반올림 없이(절사) 소수점 2자리까지만 표시하고 싶다면 아래 주석 해제
-            # val_str = str(val_float)
-            # if '.' in val_str:
-            #     integer_part, decimal_part = val_str.split('.')
-            #     return f"{integer_part}.{decimal_part[:2].ljust(2, '0')}"
-            
-            # format()은 기본적으로 반올림을 수행합니다. 질문에서 '반올림 X'라고 하셨으므로 
-            # 단순 포맷팅 대신 소수점 아래를 잘라내는 방식을 사용합니다.
+            # 반올림 없이(절사) 소수점 2자리까지만 표시
             s = str(val_float)
             if '.' in s:
                 int_part, dec_part = s.split('.')
@@ -67,7 +60,7 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         for page in pdf.pages:
             full_text += page.extract_text() + "\n"
 
-    # 2. Context 딕셔너리 생성 (공통)
+    # 2. Context 딕셔너리 생성 (공통) - 키 값의 마침표를 언더바로 변경
     context = {
         "CUSTOMER": customer_name,
         "PRODUCT": product_name,
@@ -75,26 +68,26 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         "CATEGORY2": extract_text_between(full_text, "Category 2*", "Category 3"),
         "CATEGORY3": extract_text_between(full_text, "Category 3*", "Category 4"),
         "CATEGORY4": extract_text_between(full_text, "Category 4*", "Category 5.A"),
-        "CATEGORY5.A": extract_text_between(full_text, "Category 5.A*", "Category 5.B"),
-        "CATEGORY5.B": extract_text_between(full_text, "Category 5.B*", "Category 5.C"),
-        "CATEGORY5.C": extract_text_between(full_text, "Category 5.C*", "Category 5.D"),
-        "CATEGORY7.A": extract_text_between(full_text, "Category 7.A*", "Category 7.B"),
-        "CATEGORY7.B": extract_text_between(full_text, "Category 7.B*", "Category 8"),
+        "CATEGORY5_A": extract_text_between(full_text, "Category 5.A*", "Category 5.B"),
+        "CATEGORY5_B": extract_text_between(full_text, "Category 5.B*", "Category 5.C"),
+        "CATEGORY5_C": extract_text_between(full_text, "Category 5.C*", "Category 5.D"),
+        "CATEGORY7_A": extract_text_between(full_text, "Category 7.A*", "Category 7.B"),
+        "CATEGORY7_B": extract_text_between(full_text, "Category 7.B*", "Category 8"),
         "CATEGORY8": extract_text_between(full_text, "Category 8*", "Category 9"),
         "CATEGORY9": extract_text_between(full_text, "Category 9*", "Category 10.A"),
-        "CATEGORY10.A": extract_text_between(full_text, "Category 10.A*", "Category 10.B"),
-        "CATEGORY10.B": extract_text_between(full_text, "Category 10.B*", "Category 11.A"),
-        "CATEGORY11.A": extract_text_between(full_text, "Category 11.A*", "Category 11.B"),
-        "CATEGORY11.B": extract_text_between(full_text, "Category 11.B*", "Category 12")
+        "CATEGORY10_A": extract_text_between(full_text, "Category 10.A*", "Category 10.B"),
+        "CATEGORY10_B": extract_text_between(full_text, "Category 10.B*", "Category 11.A"),
+        "CATEGORY11_A": extract_text_between(full_text, "Category 11.A*", "Category 11.B"),
+        "CATEGORY11_B": extract_text_between(full_text, "Category 11.B*", "Category 12")
     }
 
-    # 3. 모드별 분기 처리 (차이점만 반영)
+    # 3. 모드별 분기 처리 (차이점만 반영) - 키 값의 마침표를 언더바로 변경
     if mode == "CFF":
-        context["CATEGORY5.D"] = extract_text_between(full_text, "Category 5.D*", "Category 6")
+        context["CATEGORY5_D"] = extract_text_between(full_text, "Category 5.D*", "Category 6")
         context["CATEGORY6"] = extract_text_between(full_text, "Category 6", "Category 7.A")
         context["CATEGORY12"] = extract_text_between(full_text, "Category 12*", "For other")
     elif mode == "HP":
-        context["CATEGORY5.D"] = extract_text_between(full_text, "Category 5.D*", "Category 6*")
+        context["CATEGORY5_D"] = extract_text_between(full_text, "Category 5.D*", "Category 6*")
         context["CATEGORY6"] = extract_text_between(full_text, "Category 6*", "Category 7.A")
         context["CATEGORY12"] = extract_text_between(full_text, "Category 12*", "*Only fragrance")
 
@@ -106,15 +99,20 @@ def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
         st.error(f"오류: 템플릿 파일이 없습니다. '{template_path}' 경로를 확인해주세요.")
         return None
 
-    doc = DocxTemplate(template_path)
-    doc.render(context)
-    
-    # 메모리 버퍼에 저장 (직접 다운로드를 위해)
-    output_io = BytesIO()
-    doc.save(output_io)
-    output_io.seek(0)
-    
-    return output_io
+    try:
+        doc = DocxTemplate(template_path)
+        doc.render(context)
+        
+        # 메모리 버퍼에 저장 (직접 다운로드를 위해)
+        output_io = BytesIO()
+        doc.save(output_io)
+        output_io.seek(0)
+        
+        return output_io
+    except Exception as e:
+        st.error(f"템플릿 렌더링 중 오류가 발생했습니다: {e}")
+        st.error("Word 템플릿 파일 내의 변수명에 마침표(.)가 없는지 확인해주세요. (예: {{CATEGORY5.A}} -> {{CATEGORY5_A}})")
+        return None
 
 # --- Streamlit UI 구성 ---
 
