@@ -8,21 +8,17 @@ from io import BytesIO
 # --- 헬퍼 함수 ---
 
 def extract_text_between(text, start_keyword, end_keyword):
-    """두 키워드 사이의 텍스트를 추출하는 함수 (공백/줄바꿈 유연성 강화)"""
+    """두 키워드 사이의 텍스트를 추출하는 함수"""
     
     def flexible_escape(kw):
-        # 정규식 특수문자를 이스케이프 처리한 뒤, 
-        # 띄어쓰기를 모든 공백문자(\s+) 허용으로 변경
+        # 정규식 특수문자를 이스케이프 처리한 뒤, 띄어쓰기를 모든 공백문자 허용으로 변경
         escaped = re.escape(kw)
         escaped = escaped.replace(r'\ ', r'\s+')
-        # 별표(*) 앞에도 혹시 모를 공백 허용
-        escaped = escaped.replace(r'\*', r'\s*\*')
         return escaped
 
     start_pattern = flexible_escape(start_keyword)
     end_pattern = flexible_escape(end_keyword)
     
-    # 두 키워드 사이의 텍스트 탐색 (대소문자 무시, 줄바꿈 포함)
     pattern = f"{start_pattern}(.*?){end_pattern}"
     match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
     
@@ -30,18 +26,24 @@ def extract_text_between(text, start_keyword, end_keyword):
         extracted = match.group(1).strip()
         return process_value(extracted)
     
-    return "Not Permitted" # 매칭 안 되면 기본값
+    return "Not Permitted"
 
 def process_value(val_str):
-    """추출된 텍스트에서 첫 번째 숫자를 찾아 소수점 둘째 자리 또는 Not Permitted로 변환"""
+    """추출된 텍스트에서 숫자, Not Permitted, Not Restricted를 분류하여 변환"""
     if not val_str:
         return "Not Permitted"
         
-    # 이미 'Not permitted'라고 텍스트로 적혀있는 경우 우선 처리
-    if "not" in val_str.lower() and "permitted" in val_str.lower():
+    val_lower = val_str.lower()
+    
+    # 1. 'Not permitted' 처리
+    if "not" in val_lower and "permitted" in val_lower:
         return "Not Permitted"
+        
+    # 2. 'Not Restricted' 처리 (원본 PDF의 제한 없음 문구 보존)
+    if "not" in val_lower and "restricted" in val_lower:
+        return "Not Restricted"
 
-    # 텍스트 내에서 첫 번째로 등장하는 숫자(소수점 포함) 추출
+    # 3. 숫자 추출 및 소수점 2자리 포맷팅
     num_match = re.search(r'\d+\.?\d*', val_str)
     
     if not num_match:
@@ -51,16 +53,14 @@ def process_value(val_str):
         clean_str = num_match.group(0)
         val_float = float(clean_str)
         
-        # 0이거나 0.0일 경우 Not Permitted
         if val_float == 0.0:
             return "Not Permitted"
         else:
-            # 반올림 없이(절사) 소수점 2자리까지만 표시
             s = str(val_float)
             if '.' in s:
                 int_part, dec_part = s.split('.')
-                dec_part = dec_part[:2] # 소수점 2자리까지만 절사
-                dec_part = dec_part.ljust(2, '0') # 1자리일 경우 0을 채움
+                dec_part = dec_part[:2]
+                dec_part = dec_part.ljust(2, '0')
                 return f"{int_part}.{dec_part}"
             else:
                 return f"{s}.00"
@@ -70,44 +70,59 @@ def process_value(val_str):
 # --- 메인 로직 ---
 
 def process_pdf_to_word(pdf_file, customer_name, product_name, mode):
-    # 1. PDF 텍스트 추출
     full_text = ""
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             full_text += page.extract_text() + "\n"
 
-    # 2. Context 딕셔너리 생성 (공통) - 키 값의 마침표를 언더바로 유지
-    context = {
-        "CUSTOMER": customer_name,
-        "PRODUCT": product_name,
-        "CATEGORY1": extract_text_between(full_text, "Category 1*", "Category 2"),
-        "CATEGORY2": extract_text_between(full_text, "Category 2*", "Category 3"),
-        "CATEGORY3": extract_text_between(full_text, "Category 3*", "Category 4"),
-        "CATEGORY4": extract_text_between(full_text, "Category 4*", "Category 5.A"),
-        "CATEGORY5_A": extract_text_between(full_text, "Category 5.A*", "Category 5.B"),
-        "CATEGORY5_B": extract_text_between(full_text, "Category 5.B*", "Category 5.C"),
-        "CATEGORY5_C": extract_text_between(full_text, "Category 5.C*", "Category 5.D"),
-        "CATEGORY7_A": extract_text_between(full_text, "Category 7.A*", "Category 7.B"),
-        "CATEGORY7_B": extract_text_between(full_text, "Category 7.B*", "Category 8"),
-        "CATEGORY8": extract_text_between(full_text, "Category 8*", "Category 9"),
-        "CATEGORY9": extract_text_between(full_text, "Category 9*", "Category 10.A"),
-        "CATEGORY10_A": extract_text_between(full_text, "Category 10.A*", "Category 10.B"),
-        "CATEGORY10_B": extract_text_between(full_text, "Category 10.B*", "Category 11.A"),
-        "CATEGORY11_A": extract_text_between(full_text, "Category 11.A*", "Category 11.B"),
-        "CATEGORY11_B": extract_text_between(full_text, "Category 11.B*", "Category 12")
-    }
-
-    # 3. 모드별 분기 처리 (차이점만 반영)
+    # 모드별 Context 딕셔너리 분리 (요청하신 정확한 키워드 반영)
     if mode == "CFF":
-        context["CATEGORY5_D"] = extract_text_between(full_text, "Category 5.D*", "Category 6")
-        context["CATEGORY6"] = extract_text_between(full_text, "Category 6", "Category 7.A")
-        context["CATEGORY12"] = extract_text_between(full_text, "Category 12*", "For other")
+        context = {
+            "CUSTOMER": customer_name,
+            "PRODUCT": product_name,
+            "CATEGORY1": extract_text_between(full_text, "Category 1", "Category 2"),
+            "CATEGORY2": extract_text_between(full_text, "Category 2", "Category 3"),
+            "CATEGORY3": extract_text_between(full_text, "Category 3", "Category 4"),
+            "CATEGORY4": extract_text_between(full_text, "Category 4", "Category 5.A"),
+            "CATEGORY5_A": extract_text_between(full_text, "Category 5.A", "Category 5.B"),
+            "CATEGORY5_B": extract_text_between(full_text, "Category 5.B", "Category 5.C"),
+            "CATEGORY5_C": extract_text_between(full_text, "Category 5.C", "Category 5.D"),
+            "CATEGORY5_D": extract_text_between(full_text, "Category 5.D", "Category 6"),
+            "CATEGORY6": extract_text_between(full_text, "Category 6", "Category 7.A"),
+            "CATEGORY7_A": extract_text_between(full_text, "Category 7.A", "Category 7.B"),
+            "CATEGORY7_B": extract_text_between(full_text, "Category 7.B", "Category 8"),
+            "CATEGORY8": extract_text_between(full_text, "Category 8", "Category 9"),
+            "CATEGORY9": extract_text_between(full_text, "Category 9", "Category 10.A"),
+            "CATEGORY10_A": extract_text_between(full_text, "Category 10.A", "Category 10.B"),
+            "CATEGORY10_B": extract_text_between(full_text, "Category 10.B", "Category 11.A"),
+            "CATEGORY11_A": extract_text_between(full_text, "Category 11.A", "Category 11.B"),
+            "CATEGORY11_B": extract_text_between(full_text, "Category 11.B", "Category 12"),
+            "CATEGORY12": extract_text_between(full_text, "Category 12", "For other")
+        }
     elif mode == "HP":
-        context["CATEGORY5_D"] = extract_text_between(full_text, "Category 5.D*", "Category 6*")
-        context["CATEGORY6"] = extract_text_between(full_text, "Category 6*", "Category 7.A")
-        context["CATEGORY12"] = extract_text_between(full_text, "Category 12*", "*Only fragrance")
+        context = {
+            "CUSTOMER": customer_name,
+            "PRODUCT": product_name,
+            "CATEGORY1": extract_text_between(full_text, "Category 1*", "Category 2"),
+            "CATEGORY2": extract_text_between(full_text, "Category 2", "Category 3"),
+            "CATEGORY3": extract_text_between(full_text, "Category 3", "Category 4"),
+            "CATEGORY4": extract_text_between(full_text, "Category 4", "Category 5.A"),
+            "CATEGORY5_A": extract_text_between(full_text, "Category 5.A", "Category 5.B"),
+            "CATEGORY5_B": extract_text_between(full_text, "Category 5.B", "Category 5.C"),
+            "CATEGORY5_C": extract_text_between(full_text, "Category 5.C", "Category 5.D"),
+            "CATEGORY5_D": extract_text_between(full_text, "Category 5.D", "Category 6*"),
+            "CATEGORY6": extract_text_between(full_text, "Category 6*", "Category 7.A"),
+            "CATEGORY7_A": extract_text_between(full_text, "Category 7.A", "Category 7.B"),
+            "CATEGORY7_B": extract_text_between(full_text, "Category 7.B", "Category 8"),
+            "CATEGORY8": extract_text_between(full_text, "Category 8", "Category 9"),
+            "CATEGORY9": extract_text_between(full_text, "Category 9", "Category 10.A"),
+            "CATEGORY10_A": extract_text_between(full_text, "Category 10.A", "Category 10.B"),
+            "CATEGORY10_B": extract_text_between(full_text, "Category 10.B", "Category 11.A"),
+            "CATEGORY11_A": extract_text_between(full_text, "Category 11.A", "Category 11.B"),
+            "CATEGORY11_B": extract_text_between(full_text, "Category 11.B", "Category 12"),
+            "CATEGORY12": extract_text_between(full_text, "Category 12", "*Only fragrance")
+        }
 
-    # 4. Word 템플릿 렌더링
     template_path = "templates/IFRA.docx"
     
     if not os.path.exists(template_path):
@@ -167,7 +182,7 @@ if convert_clicked:
             if result_docx:
                 st.success("변환 성공!")
                 
-                # 요청하신 대로 파일명을 "제품명 IFRA 51TH.docx" 로 지정
+                # 파일명을 "제품명 IFRA 51TH.docx" 로 지정
                 file_name = f"{product_input} IFRA 51TH.docx"
                 download_placeholder.download_button(
                     label="결과물 다운로드",
@@ -176,3 +191,4 @@ if convert_clicked:
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     use_container_width=True
                 )
+
